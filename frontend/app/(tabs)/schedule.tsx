@@ -1,0 +1,124 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, RefreshControl,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { api, apiError } from '../../src/api';
+import { theme, radius } from '../../src/theme';
+import { GlassCard } from '../../src/GlassCard';
+
+export default function Schedule() {
+  const router = useRouter();
+  const [patientId, setPatientId] = useState<string | null>(null);
+  const [meds, setMeds] = useState<any[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const p = await api.get('/patients');
+      const pid = p.data[0]?.id;
+      setPatientId(pid);
+      if (pid) {
+        const m = await api.get(`/medicines?patient_id=${pid}`);
+        setMeds(m.data);
+      }
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  const remove = async (id: string) => {
+    try {
+      await api.delete(`/medicines/${id}`);
+      load();
+    } catch (e: any) { Alert.alert('Error', apiError(e)); }
+  };
+
+  return (
+    <SafeAreaView style={styles.safe} testID="schedule-screen">
+      <View style={styles.header}>
+        <Text style={styles.h1}>SCHEDULE</Text>
+        <Text style={styles.sub}>Manage medicines & dose times</Text>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.cyan} />}
+      >
+        {meds.length === 0 && (
+          <GlassCard style={{ alignItems: 'center', paddingVertical: 24 }}>
+            <Ionicons name="flask-outline" size={36} color={theme.muted} />
+            <Text style={{ color: theme.muted, marginTop: 8 }}>No medicines added yet</Text>
+          </GlassCard>
+        )}
+
+        {meds.map(m => (
+          <GlassCard key={m.id} testID={`med-${m.id}`}>
+            <View style={styles.medHead}>
+              <View style={[styles.colorDot, { backgroundColor: m.color || theme.cyan }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.medName}>{m.name}</Text>
+                <Text style={styles.medSub}>{m.dosage} · slot {m.compartment}</Text>
+              </View>
+              <TouchableOpacity onPress={() => remove(m.id)} testID={`del-${m.id}`}>
+                <Ionicons name="trash-outline" size={20} color={theme.rose} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.timesRow}>
+              {m.times.map((t: string) => (
+                <View key={t} style={styles.timeChip}>
+                  <Ionicons name="time" size={12} color={theme.cyan} />
+                  <Text style={styles.timeText}>{t}</Text>
+                </View>
+              ))}
+            </View>
+            {m.notes ? <Text style={styles.notes}>“{m.notes}”</Text> : null}
+          </GlassCard>
+        ))}
+      </ScrollView>
+
+      <TouchableOpacity
+        testID="add-medicine-fab"
+        style={styles.fab}
+        onPress={() => patientId && router.push({ pathname: '/add-medicine', params: { patientId } })}
+      >
+        <Ionicons name="add" size={28} color={theme.bg} />
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: theme.bg },
+  header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
+  h1: { color: theme.text, fontSize: 28, fontWeight: '800', letterSpacing: 3 },
+  sub: { color: theme.muted, fontSize: 12, marginTop: 4 },
+  scroll: { padding: 16, gap: 12, paddingBottom: 100 },
+  medHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  colorDot: {
+    width: 14, height: 14, borderRadius: 7,
+    shadowColor: theme.cyan, shadowOpacity: 0.6, shadowRadius: 6,
+  },
+  medName: { color: theme.text, fontSize: 16, fontWeight: '700' },
+  medSub: { color: theme.muted, fontSize: 12, marginTop: 2 },
+  timesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  timeChip: {
+    flexDirection: 'row', gap: 4, alignItems: 'center',
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 999, borderWidth: 1, borderColor: theme.glassBorder,
+    backgroundColor: 'rgba(0,240,255,0.05)',
+  },
+  timeText: { color: theme.cyan, fontWeight: '700', fontSize: 12 },
+  notes: { color: theme.muted, marginTop: 8, fontStyle: 'italic', fontSize: 12 },
+  fab: {
+    position: 'absolute', right: 20, bottom: 20,
+    width: 60, height: 60, borderRadius: 30,
+    backgroundColor: theme.cyan,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: theme.cyan, shadowOpacity: 0.6, shadowRadius: 16, elevation: 8,
+  },
+});
