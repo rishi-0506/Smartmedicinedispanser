@@ -1,0 +1,153 @@
+{
+  "theme": "DARK",
+  "archetype": "Archetype 7 (Electric & Neon / Futuristic) blended with Archetype 5 (Jewel & Luxury)",
+  "vibe": "Medical sci-fi (deep teal + holographic glass), high-tech, precise, safe, HUD-style",
+  "colors": {
+    "backgrounds": {
+      "app_bg": "#020B14",
+      "surface_base": "#051A26",
+      "glass_panel": "rgba(0, 240, 255, 0.03)",
+      "glass_panel_highlight": "rgba(0, 240, 255, 0.08)"
+    },
+    "borders": {
+      "glass_border": "rgba(0, 240, 255, 0.15)",
+      "active_glow": "rgba(0, 240, 255, 0.5)",
+      "divider": "rgba(255, 255, 255, 0.08)"
+    },
+    "typography": {
+      "primary": "#FFFFFF",
+      "secondary": "#8AB4F8",
+      "muted": "#507596",
+      "neon_cyan": "#00F0FF",
+      "neon_spring": "#00FF9D",
+      "neon_rose": "#FF3366",
+      "warning_amber": "#FFB800"
+    },
+    "accents": {
+      "primary": "#00F0FF",
+      "success": "#00FF9D",
+      "danger": "#FF3366",
+      "warning": "#FFB800"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Rajdhani",
+      "body": "Manrope",
+      "mono": "JetBrains Mono"
+    },
+    "scales": {
+      "h1": "text-4xl tracking-tighter font-bold",
+      "h2": "text-3xl tracking-tight font-bold",
+      "h3": "text-2xl tracking-tight font-semibold",
+      "h4": "text-xl font-semibold",
+      "body": "text-base leading-relaxed font-medium",
+      "small": "text-sm font-medium",
+      "label": "text-xs tracking-[0.2em] uppercase font-bold text-muted",
+      "data_value": "text-4xl font-light tracking-tighter text-neon_cyan font-heading"
+    }
+  },
+  "spacing_and_layout": {
+    "global_padding": "p-4 md:p-6",
+    "card_padding": "p-5",
+    "gap_small": "gap-2",
+    "gap_medium": "gap-4",
+    "gap_large": "gap-6",
+    "border_radius": {
+      "small": "rounded-md",
+      "medium": "rounded-xl",
+      "large": "rounded-2xl",
+      "full": "rounded-full"
+    },
+    "layout_patterns": {
+      "glass_card": "bg-[#051A26]/80 border border-[#00F0FF]/15 rounded-xl backdrop-blur-md overflow-hidden",
+      "hud_panel": "bg-transparent border border-[#00F0FF]/20 rounded-lg p-4 relative",
+      "hud_corner_accents": "Absolute positioned small L-shaped borders at corners of HUD panels using cyan tint"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#00F0FF]/10 border border-[#00F0FF] text-[#00F0FF] rounded-lg py-3 px-6 font-bold uppercase tracking-widest flex items-center justify-center shadow-[0_0_15px_rgba(0,240,255,0.2)]",
+      "secondary": "bg-transparent border border-white/10 text-white rounded-lg py-3 px-6 font-semibold flex items-center justify-center",
+      "danger": "bg-[#FF3366]/10 border border-[#FF3366] text-[#FF3366] rounded-lg py-3 px-6 font-bold uppercase shadow-[0_0_15px_rgba(255,51,102,0.2)]"
+    },
+    "inputs": {
+      "text_field": "bg-[#020B14] border border-white/10 rounded-lg p-4 text-white placeholder-[#507596] focus:border-[#00F0FF] focus:bg-[#00F0FF]/5",
+      "dropdown": "bg-[#020B14] border border-white/10 rounded-lg p-4 text-white"
+    },
+    "widgets": {
+      "trolley_status": "Glass card with grid layout showing battery, wifi, next dose timer. Use mono font for timers.",
+      "compartment_grid": "Grid of 2x3 or 3x3 squares. Empty: border-white/10. Loaded: border-[#00F0FF]/30 bg-[#00F0FF]/5. Active/Dispensing: pulse animation, border-[#00FF9D] bg-[#00FF9D]/20",
+      "dose_alert_modal": "Fullscreen overlay with deep blur. Center card heavily glowing cyan or red depending on status. Large typography for 'Time for Medication'. Button to 'Confirm Taken' in neon spring."
+    }
+  },
+  "motion_and_interactions": {
+    "pulse_animation": "For active compartments or next dose timers, use a slow breathing opacity pulse (0.4 to 1.0) on the border/shadow.",
+    "page_transition": "Smooth fade in with slight upward slide (10px).",
+    "button_press": "Scale down to 0.95 and increase opacity of inner background tint."
+  },
+  "screens": {
+    "login": {
+      "layout": "Full height, centered content. Background image with deep blur overlay.",
+      "elements": "Logo (futuristic icon), Role selection tabs (Caregiver | Patient) with glowing active state, Email/Password inputs, Primary Login button."
+    },
+    "dashboard": {
+      "layout": "ScrollView with sticky header. Header shows user profile and trolley connection status (green dot).",
+      "sections": [
+        "Hero Widget: Next Dose countdown (huge numbers, glowing)",
+        "Trolley Status Row: Battery (icon + %), Connectivity",
+        "Compartments Grid: Visual representation of physical trolley",
+        "Recent Activity List: Minimal list of recent doses taken/missed"
+      ]
+    },
+    "schedule_management": {
+      "layout": "List view of time slots and assigned medicines.",
+      "elements": "Glass cards for each dose slot. 'Add Dose' floating action button with cyan glow."
+    },
+    "dose_alert_modal": {
+      "layout": "Modal over dashboard.",
+      "elements": "Pulsing background alert, Voice playback visualizer (bars animating), 'TAKEN', 'SNOOZE', 'SKIP' buttons."
+    },
+    "history_analytics": {
+      "layout": "ScrollView.",
+      "elements": "Adherence ring chart (using svg or charts library, cyan for taken, red for missed), Weekly bar chart, History log."
+    }
+  },
+  "media_and_assets": {
+    "images": [
+      {
+        "category": "app_background",
+        "url": "https://images.pexels.com/photos/20087316/pexels-photo-20087316.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Deep blue abstract pattern for subtle background texture when heavily blurred and darkened."
+      },
+      {
+        "category": "onboarding_or_login_bg",
+        "url": "https://images.pexels.com/photos/29860371/pexels-photo-29860371.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Vibrant light trails for dynamic splash screen background."
+      },
+      {
+        "category": "patient_profile_placeholder",
+        "url": "https://images.unsplash.com/photo-1765896387387-0538bc9f997e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwxfHxjYXJlZ2l2ZXIlMjBlbGRlcmx5JTIwcGF0aWVudHxlbnwwfHx8fDE3Nzc4NjkzODN8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Nurse smiling with elderly patient, use for profile placeholders or empty states."
+      },
+      {
+        "category": "medical_tech_reference",
+        "url": "https://images.unsplash.com/photo-1612886649688-ef2912f17921?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxmdXR1cmlzdGljJTIwbWVkaWNhbCUyMHRlY2hub2xvZ3l8ZW58MHx8fHwxNzc3ODY5MzgzfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Person holding tablet, suitable for caregiver dashboard header background."
+      }
+    ],
+    "icons": {
+      "library": "lucide-react-native or @expo/vector-icons/Ionicons",
+      "style": "Thin stroke, sharp edges, matched to typography weight."
+    }
+  },
+  "instructions_to_main_agent": [
+    "This is an Expo React Native app. Ensure you are using NativeWind for Tailwind utility classes or map these design tokens into a StyleSheet/theme object.",
+    "Use 'react-native-reanimated' for the pulse animations and modal transitions.",
+    "For the trolley compartments grid, use a responsive flex wrap or grid layout that resembles a physical medicine box but styled with glassmorphism.",
+    "For glassmorphism in Expo, use 'expo-blur' (BlurView) positioned absolutely behind the transparent container with the borders.",
+    "Do NOT use pure #000000. Use the provided app_bg #020B14.",
+    "All interactive elements MUST have data-testid attributes for testing.",
+    "Do not use generic Inter font for headings, implement the specified Rajdhani or a futuristic alternative available in Expo-fonts."
+  ]
+}
