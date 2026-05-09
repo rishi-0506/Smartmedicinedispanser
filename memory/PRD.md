@@ -13,17 +13,19 @@ monitor adherence remotely. Built for hospitals, home care, and elderly/Alzheime
 - **Theme:** Medical sci-fi · deep teal `#020B14` + neon cyan `#00F0FF` glass cards
 
 ## Implemented Features
-- **Auth flow** — register, login, role select (Caregiver / Patient)
-- **Dashboard** — live next-dose countdown, trolley status (battery, wifi, loaded compartments), 6-compartment grid, adherence stats, today's dose queue
-- **Schedule** — list/add/delete medicines with name, dosage, compartment, color tag, multiple times, notes; auto-generates today's dose entries
+- **Auth flow** — register, login, role select (Caregiver / Patient). Role auto-detected at login from account.
+- **Role separation** — Caregivers manage multiple patients (switch patient via modal, add new patients via `/add-patient`); Patients see only their own profile (read-only schedule with "Ask your caregiver" notice, no FAB/delete icons).
+- **Dashboard** — live next-dose countdown, trolley status (battery, wifi, loaded compartments), 6-compartment grid, adherence stats, today's dose queue. Header shows "CAREGIVER · WELCOME" or "PATIENT · WELCOME".
+- **Patient switcher** — caregiver dashboard patient card is tappable → opens patient list modal with active highlight + "Add New Patient" CTA.
+- **Schedule** — list/add/delete medicines (caregiver-only writes); auto-generates today's dose entries
 - **Dose Alert modal** — pulsing ring, voice playback (TTS), TAKEN / SKIP / SNOOZE actions with haptics
 - **History & Analytics** — 14-day adherence ring + per-status counters + recent events log
 - **Profile / Voice settings** — language picker (EN/HI/TA/TE/BN) + voice timbre + preview
-- **Mock IoT trolley** — seeded with 1 patient (Aarav Sharma), 3 medicines, 6 compartments, simulated battery/wifi
+- **Mock IoT trolley** — seeded patient (Aarav Sharma) linked to patient seed user, 3 medicines, 6 compartments, simulated battery/wifi
 
 ## API Surface (`/api/*`)
-- `POST /auth/register`, `POST /auth/login`, `GET /auth/me`
-- `GET/POST /patients`, `GET /patients/{id}`
+- `POST /auth/register` (auto-creates patient profile if role=patient), `POST /auth/login`, `GET /auth/me`
+- `GET /patients`, `POST /patients` (caregiver-only), `GET /patients/me` (patient-only), `GET /patients/{id}`
 - `GET/POST /medicines`, `DELETE /medicines/{id}`
 - `GET /doses`, `GET /doses/today`, `GET /doses/stats`, `PATCH /doses/{id}`
 - `GET /trolley/{patient_id}`, `POST /trolley/{patient_id}/dispense/{compartment}`
