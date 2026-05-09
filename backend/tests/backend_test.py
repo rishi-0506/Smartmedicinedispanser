@@ -152,6 +152,86 @@ def test_trolley(s):
     assert "battery" in data and "wifi" in data
 
 
+# ---- Role Separation (Iteration 2) ----
+PATIENT_EMAIL = "patient@trolley.health"
+PATIENT_PASS = "Patient@123"
+
+
+def test_login_patient(s):
+    r = s.post(f"{API}/auth/login", json={"email": PATIENT_EMAIL, "password": PATIENT_PASS})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["user"]["role"] == "patient"
+    state["ptoken"] = data["access_token"]
+    state["puid"] = data["user"]["id"]
+
+
+def patient_headers():
+    return {"Authorization": f"Bearer {state['ptoken']}", "Content-Type": "application/json"}
+
+
+def test_patients_me_for_patient(s):
+    r = s.get(f"{API}/patients/me", headers=patient_headers())
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["name"] == "Aarav Sharma"
+    assert p.get("user_id") == state["puid"], "Aarav Sharma must be linked to patient user via user_id"
+
+
+def test_patients_me_forbidden_for_caregiver(s):
+    r = s.get(f"{API}/patients/me", headers=auth_headers())
+    assert r.status_code == 403
+
+
+def test_patient_list_returns_only_own(s):
+    r = s.get(f"{API}/patients", headers=patient_headers())
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 1
+    assert data[0]["user_id"] == state["puid"]
+
+
+def test_create_patient_forbidden_for_patient(s):
+    payload = {"name": "TEST_X", "age": 50, "condition": "", "language": "en"}
+    r = s.post(f"{API}/patients", json=payload, headers=patient_headers())
+    assert r.status_code == 403
+
+
+def test_create_patient_caregiver_ok(s):
+    payload = {"name": "TEST_NewPatient", "age": 60, "condition": "Diabetes", "language": "en", "avatar": ""}
+    r = s.post(f"{API}/patients", json=payload, headers=auth_headers())
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["name"] == "TEST_NewPatient"
+    assert data["caregiver_id"] == state["uid"]
+    new_pid = data["id"]
+    # Verify GET reflects creation
+    g = s.get(f"{API}/patients/{new_pid}", headers=auth_headers())
+    assert g.status_code == 200
+    assert g.json()["name"] == "TEST_NewPatient"
+    # Trolley initialized
+    tr = s.get(f"{API}/trolley/{new_pid}", headers=auth_headers())
+    assert tr.status_code == 200
+    state["new_pid"] = new_pid
+
+
+def test_register_patient_auto_creates_profile(s):
+    import uuid
+    email = f"TEST_pt_{uuid.uuid4().hex[:8]}@trolley.health"
+    r = s.post(f"{API}/auth/register", json={
+        "email": email, "password": "Test@123", "name": "TEST_AutoPatient", "role": "patient"
+    })
+    assert r.status_code == 200, r.text
+    tok = r.json()["access_token"]
+    me = s.get(f"{API}/patients/me", headers={"Authorization": f"Bearer {tok}"})
+    assert me.status_code == 200
+    p = me.json()
+    assert p["name"] == "TEST_AutoPatient"
+    # Trolley auto-created
+    tr = s.get(f"{API}/trolley/{p['id']}", headers={"Authorization": f"Bearer {tok}"})
+    assert tr.status_code == 200
+
+
 # ---- TTS ----
 def test_tts(s):
     r = s.post(f"{API}/tts", json={"text": "Hello", "voice": "nova", "language": "en"}, headers=auth_headers(), timeout=30)

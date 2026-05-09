@@ -145,10 +145,39 @@ async def register(body: RegisterIn):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(user_doc)
+
+    # If patient, auto-create patient profile + trolley
+    if body.role == "patient":
+        await _create_patient_profile_for_user(user_id, body.name)
+
     token = create_access_token(user_id, email, body.role)
     user_doc.pop("password_hash", None)
     user_doc.pop("_id", None)
     return {"access_token": token, "user": user_doc}
+
+
+async def _create_patient_profile_for_user(user_id: str, name: str):
+    pid = str(uuid.uuid4())
+    await db.patients.insert_one({
+        "id": pid,
+        "user_id": user_id,
+        "caregiver_id": None,
+        "name": name,
+        "age": 65,
+        "condition": "—",
+        "avatar": "",
+        "language": "en",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await db.trolley_status.insert_one({
+        "patient_id": pid,
+        "battery": 92,
+        "wifi": True,
+        "online": True,
+        "compartments": [{"id": i, "loaded": False, "medicine_id": None} for i in range(1, 7)],
+        "last_sync": datetime.now(timezone.utc).isoformat(),
+    })
+    return pid
 
 
 @api.post("/auth/login", response_model=AuthOut)
@@ -174,17 +203,31 @@ async def list_patients(user: dict = Depends(get_current_user)):
     if user["role"] == "caregiver":
         patients = await db.patients.find({"caregiver_id": user["id"]}, {"_id": 0}).to_list(100)
     else:
-        # patient role: view their own profile
         patients = await db.patients.find({"user_id": user["id"]}, {"_id": 0}).to_list(10)
     return patients
 
 
+@api.get("/patients/me")
+async def my_patient(user: dict = Depends(get_current_user)):
+    if user["role"] != "patient":
+        raise HTTPException(403, "Only patients can fetch their own profile")
+    p = await db.patients.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not p:
+        # auto-create on demand in case missing
+        await _create_patient_profile_for_user(user["id"], user.get("name", "Patient"))
+        p = await db.patients.find_one({"user_id": user["id"]}, {"_id": 0})
+    return p
+
+
 @api.post("/patients")
 async def create_patient(body: PatientIn, user: dict = Depends(get_current_user)):
+    if user["role"] != "caregiver":
+        raise HTTPException(403, "Only caregivers can add patients")
     pid = str(uuid.uuid4())
     doc = {
         "id": pid,
         "caregiver_id": user["id"],
+        "user_id": None,
         "name": body.name,
         "age": body.age,
         "condition": body.condition,
@@ -407,22 +450,26 @@ async def seed_data():
     patient_email = "patient@trolley.health"
     pu = await db.users.find_one({"email": patient_email})
     if not pu:
+        patient_user_id = str(uuid.uuid4())
         await db.users.insert_one({
-            "id": str(uuid.uuid4()),
+            "id": patient_user_id,
             "email": patient_email,
             "name": "Aarav Sharma",
             "role": "patient",
             "password_hash": hash_password("Patient@123"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
+    else:
+        patient_user_id = pu["id"]
 
-    # Demo patient profile
+    # Demo patient profile (linked to BOTH the caregiver and the patient user)
     p = await db.patients.find_one({"caregiver_id": admin_id, "name": "Aarav Sharma"})
     if not p:
         pid = str(uuid.uuid4())
         await db.patients.insert_one({
             "id": pid,
             "caregiver_id": admin_id,
+            "user_id": patient_user_id,
             "name": "Aarav Sharma",
             "age": 72,
             "condition": "Hypertension, Mild Alzheimer's",
@@ -430,6 +477,14 @@ async def seed_data():
             "language": "hi",
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
+    else:
+        # Backfill user_id on existing seeded record
+        if not p.get("user_id"):
+            await db.patients.update_one({"id": p["id"]}, {"$set": {"user_id": patient_user_id}})
+        pid = p["id"]
+        # Skip the rest if already populated
+        if await db.medicines.count_documents({"patient_id": pid}) > 0:
+            return
         await db.trolley_status.insert_one({
             "patient_id": pid,
             "battery": 87,

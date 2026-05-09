@@ -15,7 +15,6 @@ export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState('admin@trolley.health');
   const [password, setPassword] = useState('Admin@123');
-  const [role, setRole] = useState<'caregiver' | 'patient'>('caregiver');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
@@ -49,27 +48,6 @@ export default function Login() {
           </View>
 
           <View style={styles.card} testID="login-card">
-            <Text style={styles.label}>SIGN IN AS</Text>
-            <View style={styles.roleRow}>
-              {(['caregiver', 'patient'] as const).map(r => (
-                <TouchableOpacity
-                  key={r}
-                  testID={`role-${r}`}
-                  onPress={() => setRole(r)}
-                  style={[styles.rolePill, role === r && styles.rolePillActive]}
-                >
-                  <Ionicons
-                    name={r === 'caregiver' ? 'people' : 'person'}
-                    size={16}
-                    color={role === r ? theme.cyan : theme.muted}
-                  />
-                  <Text style={[styles.rolePillText, role === r && { color: theme.cyan }]}>
-                    {r.toUpperCase()}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
             <Text style={styles.label}>EMAIL</Text>
             <TextInput
               testID="email-input"
@@ -116,7 +94,11 @@ export default function Login() {
 
           <View style={styles.demoHint}>
             <Ionicons name="flask" size={12} color={theme.muted} />
-            <Text style={styles.demoText}>Demo: admin@trolley.health · Admin@123</Text>
+            <Text style={styles.demoText}>Caregiver: admin@trolley.health / Admin@123</Text>
+          </View>
+          <View style={styles.demoHint}>
+            <Ionicons name="person" size={12} color={theme.muted} />
+            <Text style={styles.demoText}>Patient: patient@trolley.health / Patient@123</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

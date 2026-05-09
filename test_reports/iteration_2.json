@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 2 — Role separation testing. Backend: 21/21 pytest passing (added 7 new role-separation tests covering /patients/me, caregiver-only POST /patients with 403 for patient, patient-list scoping, register-as-patient auto profile+trolley creation). Frontend: caregiver and patient flows fully verified on mobile viewport (390x844). Found and FIXED 1 backend bug.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global", "issues": ["Pre-existing console deprecation warnings: 'shadow*' style props deprecated (use boxShadow). Cosmetic only."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional cleanup: migrate shadow* style props to boxShadow (cosmetic warnings only)."
+  ],
+  "critical_code_review_comments": [
+    "FIXED: server.py POST /api/patients referenced body.user_id but PatientIn model has no such field — would raise AttributeError 500 when caregiver creates a new patient. Replaced with user_id=None so caregiver-created patients are unlinked to user accounts (which matches frontend behavior — frontend doesn't send user_id).",
+    "GET /api/patients/me correctly enforces role==patient (403 for caregivers).",
+    "POST /api/patients correctly enforces role==caregiver (403 for patients) — verified.",
+    "Seed data backfills user_id on existing 'Aarav Sharma' record so demo patient login resolves to correct profile.",
+    "Patient register auto-creates patient profile + trolley_status with 6 compartments — verified end-to-end.",
+    "GET /api/patients filters by user_id for patient role (only own profile returned)."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed body.user_id AttributeError in create_patient)",
+    "/app/backend/tests/backend_test.py (added 7 role-separation tests)",
+    "/app/test_reports/iteration_2.json"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100%"},
+  "seed_data_creation": "None — relied on existing seed (admin@trolley.health, patient@trolley.health, Aarav Sharma). Test-created TEST_* patients/users were cleaned up post-test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login submit testID is 'login-submit' (NOT 'sign-in-btn'). Add-patient screen testID 'add-patient-screen', form fields pt-name/pt-age/pt-condition/pt-lang-{code}/pt-submit. Patient switcher: tap 'patient-card' (caregiver only) → modal with 'add-new-patient-btn' and 'switch-to-{pid}' rows. Schedule FAB testID 'add-medicine-fab' renders only for caregiver. Patient sees 'Read-only · Ask your caregiver' banner. After file additions in /app/frontend/app/, Expo metro must be restarted (sudo supervisorctl restart expo) to register new routes — observed during testing.",
+  "rca_of_issue": "Bug: POST /api/patients raised AttributeError because PatientIn model lacked user_id field but server tried body.user_id. Repro: as caregiver, POST /api/patients with valid payload — would 500. Fix: hardcoded user_id=None in create_patient since frontend never supplies user_id (caregivers create unlinked patient records). Verified by test_create_patient_caregiver_ok and full UI add-patient flow."
+}

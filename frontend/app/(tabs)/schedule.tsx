@@ -6,49 +6,55 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { api, apiError } from '../../src/api';
+import { useAuth } from '../../src/auth';
+import { usePatient } from '../../src/patient';
 import { theme, radius } from '../../src/theme';
 import { GlassCard } from '../../src/GlassCard';
 
 export default function Schedule() {
   const router = useRouter();
-  const [patientId, setPatientId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const { currentPatient } = usePatient();
   const [meds, setMeds] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const isCaregiver = user?.role === 'caregiver';
 
   const load = useCallback(async () => {
+    if (!currentPatient) { setMeds([]); return; }
     try {
-      const p = await api.get('/patients');
-      const pid = p.data[0]?.id;
-      setPatientId(pid);
-      if (pid) {
-        const m = await api.get(`/medicines?patient_id=${pid}`);
-        setMeds(m.data);
-      }
-    } catch (e) { /* ignore */ }
-  }, []);
+      const m = await api.get(`/medicines?patient_id=${currentPatient.id}`);
+      setMeds(m.data);
+    } catch { /* ignore */ }
+  }, [currentPatient]);
 
   useEffect(() => { load(); }, [load]);
-
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const remove = async (id: string) => {
-    try {
-      await api.delete(`/medicines/${id}`);
-      load();
-    } catch (e: any) { Alert.alert('Error', apiError(e)); }
+    try { await api.delete(`/medicines/${id}`); load(); }
+    catch (e: any) { Alert.alert('Error', apiError(e)); }
   };
 
   return (
     <SafeAreaView style={styles.safe} testID="schedule-screen">
       <View style={styles.header}>
         <Text style={styles.h1}>SCHEDULE</Text>
-        <Text style={styles.sub}>Manage medicines & dose times</Text>
+        <Text style={styles.sub}>
+          {currentPatient ? `${currentPatient.name} · ${meds.length} medicines` : 'No patient selected'}
+        </Text>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.cyan} />}
       >
+        {!isCaregiver && (
+          <GlassCard style={{ flexDirection: 'row', gap: 10, alignItems: 'center', backgroundColor: 'rgba(0,240,255,0.04)' }}>
+            <Ionicons name="lock-closed" size={16} color={theme.cyan} />
+            <Text style={styles.readOnly}>Read-only · Ask your caregiver to update medicines</Text>
+          </GlassCard>
+        )}
+
         {meds.length === 0 && (
           <GlassCard style={{ alignItems: 'center', paddingVertical: 24 }}>
             <Ionicons name="flask-outline" size={36} color={theme.muted} />
@@ -64,9 +70,11 @@ export default function Schedule() {
                 <Text style={styles.medName}>{m.name}</Text>
                 <Text style={styles.medSub}>{m.dosage} · slot {m.compartment}</Text>
               </View>
-              <TouchableOpacity onPress={() => remove(m.id)} testID={`del-${m.id}`}>
-                <Ionicons name="trash-outline" size={20} color={theme.rose} />
-              </TouchableOpacity>
+              {isCaregiver && (
+                <TouchableOpacity onPress={() => remove(m.id)} testID={`del-${m.id}`}>
+                  <Ionicons name="trash-outline" size={20} color={theme.rose} />
+                </TouchableOpacity>
+              )}
             </View>
             <View style={styles.timesRow}>
               {m.times.map((t: string) => (
@@ -81,13 +89,15 @@ export default function Schedule() {
         ))}
       </ScrollView>
 
-      <TouchableOpacity
-        testID="add-medicine-fab"
-        style={styles.fab}
-        onPress={() => patientId && router.push({ pathname: '/add-medicine', params: { patientId } })}
-      >
-        <Ionicons name="add" size={28} color={theme.bg} />
-      </TouchableOpacity>
+      {isCaregiver && currentPatient && (
+        <TouchableOpacity
+          testID="add-medicine-fab"
+          style={styles.fab}
+          onPress={() => router.push({ pathname: '/add-medicine', params: { patientId: currentPatient.id } })}
+        >
+          <Ionicons name="add" size={28} color={theme.bg} />
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 }
@@ -98,11 +108,9 @@ const styles = StyleSheet.create({
   h1: { color: theme.text, fontSize: 28, fontWeight: '800', letterSpacing: 3 },
   sub: { color: theme.muted, fontSize: 12, marginTop: 4 },
   scroll: { padding: 16, gap: 12, paddingBottom: 100 },
+  readOnly: { color: theme.cyan, fontSize: 12, letterSpacing: 1 },
   medHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  colorDot: {
-    width: 14, height: 14, borderRadius: 7,
-    shadowColor: theme.cyan, shadowOpacity: 0.6, shadowRadius: 6,
-  },
+  colorDot: { width: 14, height: 14, borderRadius: 7, shadowColor: theme.cyan, shadowOpacity: 0.6, shadowRadius: 6 },
   medName: { color: theme.text, fontSize: 16, fontWeight: '700' },
   medSub: { color: theme.muted, fontSize: 12, marginTop: 2 },
   timesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
@@ -116,8 +124,7 @@ const styles = StyleSheet.create({
   notes: { color: theme.muted, marginTop: 8, fontStyle: 'italic', fontSize: 12 },
   fab: {
     position: 'absolute', right: 20, bottom: 20,
-    width: 60, height: 60, borderRadius: 30,
-    backgroundColor: theme.cyan,
+    width: 60, height: 60, borderRadius: 30, backgroundColor: theme.cyan,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: theme.cyan, shadowOpacity: 0.6, shadowRadius: 16, elevation: 8,
   },
