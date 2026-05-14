@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { api, apiError } from '../src/api';
+import { saveDrawerSchedule, parseTime, MAX_DRAWERS } from '../src/firebase/dispenserService';
 import { theme, radius } from '../src/theme';
 
 const COLORS = ['#00F0FF', '#00FF9D', '#FFB800', '#FF3366', '#8AB4F8'];
@@ -21,6 +22,7 @@ export default function AddMedicine() {
   const [newTime, setNewTime] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
 
   const addTime = () => {
     const t = newTime.trim();
@@ -40,11 +42,40 @@ export default function AddMedicine() {
       return;
     }
     setLoading(true);
+    setSyncMsg(null);
     try {
+      // 1) Existing backend save (MongoDB / FastAPI) — unchanged primary flow
       await api.post('/medicines', {
         patient_id: patientId, name, dosage, compartment, times, notes, color,
       });
-      router.back();
+
+      // 2) Additive Firebase sync for ESP32 dispenser (drawers 1..MAX_DRAWERS only).
+      // Uses the FIRST scheduled time for the drawer. If credentials aren't set,
+      // the service silently returns skipped=true and the app continues normally.
+      if (compartment <= MAX_DRAWERS) {
+        const t = parseTime(times[0]);
+        if (t) {
+          const result = await saveDrawerSchedule({
+            drawerNumber: compartment,
+            medicine: name,
+            hour: t.hour,
+            minute: t.minute,
+            enabled: true,
+          });
+          if (result.ok) {
+            setSyncMsg({ kind: 'ok', text: `Synced to dispenser · drawer ${compartment}` });
+          } else if (result.skipped) {
+            setSyncMsg({ kind: 'warn', text: `Saved locally · dispenser sync skipped (${result.reason || 'unconfigured'})` });
+          } else {
+            setSyncMsg({ kind: 'err', text: `Saved locally · Firebase sync failed (${result.reason})` });
+          }
+        }
+      } else {
+        setSyncMsg({ kind: 'warn', text: `Saved locally · ESP32 only supports drawers 1–${MAX_DRAWERS}` });
+      }
+
+      // Give the user a moment to read the sync status, then return
+      setTimeout(() => router.back(), 900);
     } catch (e: any) {
       Alert.alert('Error', apiError(e));
     } finally {
@@ -121,6 +152,34 @@ export default function AddMedicine() {
             {loading ? <ActivityIndicator color={theme.cyan} /> :
               <Text style={styles.primaryBtnText}>ADD TO TROLLEY →</Text>}
           </TouchableOpacity>
+
+          {syncMsg && (
+            <View
+              testID="sync-status"
+              style={[
+                styles.syncBar,
+                syncMsg.kind === 'ok' && { borderColor: theme.spring, backgroundColor: 'rgba(0,255,157,0.08)' },
+                syncMsg.kind === 'warn' && { borderColor: theme.amber, backgroundColor: 'rgba(255,184,0,0.08)' },
+                syncMsg.kind === 'err' && { borderColor: theme.rose, backgroundColor: 'rgba(255,51,102,0.08)' },
+              ]}
+            >
+              <Ionicons
+                name={syncMsg.kind === 'ok' ? 'cloud-done' : syncMsg.kind === 'warn' ? 'cloud-offline' : 'warning'}
+                size={16}
+                color={syncMsg.kind === 'ok' ? theme.spring : syncMsg.kind === 'warn' ? theme.amber : theme.rose}
+              />
+              <Text style={[
+                styles.syncText,
+                {
+                  color: syncMsg.kind === 'ok' ? theme.spring : syncMsg.kind === 'warn' ? theme.amber : theme.rose,
+                },
+              ]}>{syncMsg.text}</Text>
+            </View>
+          )}
+
+          <Text style={styles.hint}>
+            Compartments 1–{MAX_DRAWERS} sync to the ESP32 dispenser. Slots 5–6 are app-only.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -168,4 +227,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14, borderRadius: radius.md, alignItems: 'center',
   },
   primaryBtnText: { color: theme.cyan, fontWeight: '800', letterSpacing: 3, fontSize: 13 },
+  syncBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginTop: 14, paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: radius.md, borderWidth: 1,
+  },
+  syncText: { fontSize: 12, fontWeight: '600', flex: 1 },
+  hint: { color: theme.muted, fontSize: 11, marginTop: 14, textAlign: 'center', fontStyle: 'italic' },
 });

@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 3 — Firebase RTDB IoT bridge testing. Found and FIXED 1 CRITICAL regression in dashboard.tsx (esp32 undefined reference). Backend 18/21 passing (3 pre-existing failures unrelated to Firebase). After fix, all Firebase-related flows behave per spec: Dashboard renders without crash, ESP32 pill stays hidden when Firebase unconfigured, comp=5 shows amber 'ESP32 only supports drawers 1–4' banner, comp=1..4 trigger graceful 'sync skipped (Firebase credentials not set)' banner. Backwards compatibility verified — existing add-medicine and dashboard flows still work end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/tts", "issue": "Pre-existing: Emergent LLM key budget exceeded (cost 0.00126 > max 0.001). Returns 500 with budget_exceeded. Not caused by this iteration."},
+      {"endpoint": "GET /api/doses?patient_id=<pid>", "issue": "Pre-existing flaky: returned empty list for Aarav Sharma in this session (cascades into test_dose_patch KeyError). Seed/scheduler may not have generated doses for today's window at test time. Functional endpoint OK (returns 200, valid list)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "(tabs)/dashboard.tsx", "issue": "FIXED by testing agent — `esp32` variable was referenced on lines 225,228,229,232,233 without being declared as state. `listenToDispenserState` was imported but never invoked. Caused 'ReferenceError: esp32 is not defined' RED SCREEN on every caregiver login (dashboard is landing tab), completely blocking the app. Fix: added `const [esp32, setEsp32] = useState<DispenserState | null>(null)` and a `useEffect` that subscribes via `listenToDispenserState(setEsp32)` and unsubscribes on unmount. With placeholder Firebase credentials, listener returns null immediately and the ESP32 pill stays hidden — exactly matching the documented spec.", "testID": "esp32-status", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global", "issues": ["Pre-existing console deprecation warnings: 'shadow*' style props deprecated (use boxShadow). Cosmetic only — carried over from iteration 2."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Review the dashboard.tsx fix applied by testing agent — minimal additive change (3 lines: useState + useEffect subscription) that wires up the already-imported `listenToDispenserState` and declares the `esp32` state the JSX already expected. Matches main agent's stated intent.",
+    "TTS budget: top up Emergent LLM key budget (pre-existing, not Firebase-related). Currently /api/tts returns 500 budget_exceeded.",
+    "Optional: investigate why /api/doses returns empty for Aarav Sharma even though seed claims to populate today's queue — could be timezone/cron edge case."
+  ],
+  "critical_code_review_comments": [
+    "CRITICAL FIXED: dashboard.tsx referenced `esp32` JSX variable that was never declared and never subscribed via the imported `listenToDispenserState`. This was a 100% reproducible red screen blocking every caregiver post-login.",
+    "dispenserService.ts is correctly designed — `isFirebaseConfigured` short-circuits placeholder credentials, `saveDrawerSchedule` is defensive (returns SyncResult, never throws), drawerNumber bounds check works.",
+    "add-medicine.tsx correctly distinguishes the 3 sync outcomes (ok/skipped/error) with appropriate colors (spring/amber/rose) and clear messaging. The 900ms timeout before router.back() is short but gives the banner enough time to render.",
+    "Caveat: `saveDrawerSchedule` checks `isFirebaseConfigured` BEFORE the drawerNumber bounds check, so for drawer 5/6 with placeholder credentials the `reason` returned is 'Firebase credentials not set' rather than 'Drawer 5 > 4'. The UI bypasses this anyway via the explicit `compartment <= MAX_DRAWERS` check in add-medicine.tsx (line 55), so the user-visible behavior is correct. Spec only requires `{ok:false, skipped:true}` for drawer=5 — both conditions return that shape, so spec is met."
+  ],
+  "updated_files": [
+    "/app/frontend/app/(tabs)/dashboard.tsx (added useState<DispenserState|null> for esp32 and useEffect to subscribe to listenToDispenserState — minimal additive fix matching documented spec)"
+  ],
+  "success_rate": {"backend": "85.7% (18/21 — 3 pre-existing non-Firebase failures)", "frontend": "100% after dashboard.tsx fix (0% before — red screen on every login)"},
+  "seed_data_creation": "Created 2 test medicines via UI: TEST_FB_C2 (comp 2) and TEST_FB_C5 (comp 5). Both persisted to MongoDB. Caregiver can delete from Schedule tab if cleanup needed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 3 introduced Firebase RTDB IoT bridge. dashboard.tsx was missing the `esp32` state + useEffect subscription (testing agent added them at lines 51 and 58-61). When verifying, hard-reload the web preview after expo restart — Metro may serve stale bundle. Add-medicine flow: comp 1-4 + placeholder creds → amber 'sync skipped (Firebase credentials not set)' banner; comp 5/6 → amber 'ESP32 only supports drawers 1–4' banner. Banner testID: 'sync-status'. Dashboard ESP32 pill testID: 'esp32-status' (hidden when Firebase unconfigured). Backend test_doses_list/test_dose_patch are flaky depending on seed dose scheduling — not related to this iteration.",
+  "rca_of_issue": "Root cause: dashboard.tsx (lines 225-236) was authored expecting `esp32` state to exist but the `useState` declaration + `useEffect(listenToDispenserState)` were omitted from the diff. Reproduction: login as admin@trolley.health/Admin@123 → dashboard renders → React throws ReferenceError → red screen 'esp32 is not defined' at line 225:14. Mitigation applied: added `const [esp32, setEsp32] = useState<DispenserState|null>(null)` and a useEffect that subscribes via `listenToDispenserState(setEsp32)` returning the unsubscribe function. With placeholder Firebase creds, listener invokes callback with null immediately and returns null Unsubscribe, so esp32 stays null forever and the `{esp32 && (...)}` JSX never renders — matches spec exactly. Verified post-fix: dashboard renders, trolley-card present, esp32-status absent, 0 pageerrors during full caregiver flow (dashboard → schedule → add-medicine comp=2 → comp=5 → history → profile)."
+}

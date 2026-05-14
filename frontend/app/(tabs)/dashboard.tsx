@@ -12,6 +12,7 @@ import { usePatient } from '../../src/patient';
 import { theme, radius } from '../../src/theme';
 import { GlassCard } from '../../src/GlassCard';
 import { PulseDot } from '../../src/Pulse';
+import { listenToDispenserState, DispenserState } from '../../src/firebase/dispenserService';
 
 type Trolley = { battery: number; wifi: boolean; online: boolean; compartments: any[]; last_sync: string };
 type Dose = { id: string; medicine_name: string; dosage: string; compartment: number; scheduled_at: string; status: string };
@@ -47,10 +48,17 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [tick, setTick] = useState(0);
   const [showSwitcher, setShowSwitcher] = useState(false);
+  const [esp32, setEsp32] = useState<DispenserState | null>(null);
 
   const isCaregiver = user?.role === 'caregiver';
 
   useEffect(() => { const i = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(i); }, []);
+
+  // Subscribe to ESP32 dispenser state (no-op when Firebase isn't configured)
+  useEffect(() => {
+    const unsub = listenToDispenserState(setEsp32);
+    return () => { if (unsub) unsub(); };
+  }, []);
 
   const load = useCallback(async () => {
     if (!currentPatient) return;
@@ -220,6 +228,19 @@ export default function Dashboard() {
                 </View>
               ))}
             </View>
+
+            {esp32 && (
+              <View style={styles.esp32Row} testID="esp32-status">
+                <View style={styles.esp32Pill}>
+                  <PulseDot color={esp32.online ? theme.spring : theme.muted} size={6} />
+                  <Text style={styles.esp32Text}>ESP32 · {esp32.online ? 'ONLINE' : 'OFFLINE'}</Text>
+                </View>
+                <Text style={styles.esp32Sub}>
+                  {(esp32.currentStatus || 'idle').toUpperCase()}
+                  {esp32.lastDispensedDrawer ? ` · last drawer ${esp32.lastDispensedDrawer}` : ''}
+                </Text>
+              </View>
+            )}
           </GlassCard>
         )}
 
@@ -387,6 +408,19 @@ const styles = StyleSheet.create({
   },
   cellNum: { position: 'absolute', top: 6, left: 8, color: theme.muted, fontSize: 10, fontWeight: '700' },
   cellLabel: { fontSize: 9, letterSpacing: 1.5, color: theme.muted, marginTop: 6, fontWeight: '700' },
+
+  esp32Row: {
+    marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.divider,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+  },
+  esp32Pill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 999, borderWidth: 1, borderColor: theme.glassBorder,
+    backgroundColor: 'rgba(0,240,255,0.04)',
+  },
+  esp32Text: { color: theme.text, fontSize: 10, letterSpacing: 1.5, fontWeight: '700' },
+  esp32Sub: { color: theme.muted, fontSize: 10, letterSpacing: 1 },
 
   doseRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: theme.divider },
   doseTime: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.glassBorder },
