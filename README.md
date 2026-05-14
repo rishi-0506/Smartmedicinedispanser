@@ -25,6 +25,60 @@ Servo / LED / IR / Push button / SH1106 OLED
 
 ---
 
+## Local development setup
+
+> If you see `Request failed with status code 404` on the login screen, the frontend is calling the wrong URL or the backend isn't running. Follow the order below exactly.
+
+### 1. Start MongoDB
+```bash
+# macOS (Homebrew)
+brew services start mongodb-community
+
+# Linux (systemd)
+sudo systemctl start mongod
+
+# Or via Docker
+docker run -d --name mongo -p 27017:27017 mongo:7
+```
+Verify it's listening on `mongodb://localhost:27017`.
+
+### 2. Start the backend
+```bash
+cd backend
+cp .env.example .env                         # one-time
+pip install -r requirements.txt              # one-time
+uvicorn server:app --reload --host 0.0.0.0 --port 8000
+```
+Verify it responds:
+```bash
+curl http://localhost:8000/api/
+# → {"service":"Smart Trolley Medicine Dispenser API","status":"online"}
+```
+
+### 3. Start the frontend
+```bash
+cd frontend
+cp .env.example .env                         # one-time — sets EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
+yarn install                                 # one-time
+npx expo start -c                            # `-c` clears the cache (required after .env changes!)
+```
+
+### 4. Log in
+Press `w` for web (or scan the QR with Expo Go on a device on the same Wi-Fi). Use:
+- `admin@trolley.health` / `Admin@123`
+
+### Troubleshooting the 404 / login failure
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Request failed with status code 404` on login | `EXPO_PUBLIC_BACKEND_URL` missing or pointing to a non-running backend | Copy `frontend/.env.example` → `frontend/.env`, restart Expo with `npx expo start -c` |
+| `Network Error` / connection refused | Backend not running, or port mismatch | Verify `curl http://localhost:8000/api/` returns 200. Make sure the port in `backend` (`--port 8000`) matches `EXPO_PUBLIC_BACKEND_URL` |
+| 404 on Android emulator only | `localhost` resolves to the emulator itself | Use `EXPO_PUBLIC_BACKEND_URL=http://10.0.2.2:8000` |
+| 404 on physical phone via Expo Go | Phone can't reach your dev laptop | Use your laptop's LAN IP, e.g. `http://192.168.1.42:8000`, and make sure your firewall allows it |
+| Wrong account error / `Invalid email or password` | Seed not run | Restart backend — the admin user is re-seeded on startup |
+
+---
+
 ## Firebase Realtime Database setup
 
 > The app **continues to work without Firebase** — if credentials are left as placeholders, the ESP32 sync is silently skipped and the medicine is still saved to the backend.

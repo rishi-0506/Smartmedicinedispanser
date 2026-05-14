@@ -4,8 +4,22 @@ import { Platform } from 'react-native';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 
+// Loud, single-shot warning so a missing env var is obvious instead of
+// surfacing as a confusing `404` on the first network call.
+if (!BASE) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[api] EXPO_PUBLIC_BACKEND_URL is not set.\n' +
+    '  Copy frontend/.env.example to frontend/.env, set the URL, then\n' +
+    '  restart Expo with:   npx expo start -c\n' +
+    '  Falling back to http://localhost:8000 for local development.'
+  );
+}
+
+const RESOLVED_BASE = BASE || 'http://localhost:8000';
+
 export const api = axios.create({
-  baseURL: `${BASE}/api`,
+  baseURL: `${RESOLVED_BASE}/api`,
   timeout: 30000,
 });
 
