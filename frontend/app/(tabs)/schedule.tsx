@@ -5,7 +5,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { api, apiError } from '../../src/api';
+import { collection, query, where, getDocs, doc, deleteDoc } from 'firebase/firestore';
+import { db } from '../../src/firebase/firebaseConfig';
 import { useAuth } from '../../src/auth';
 import { usePatient } from '../../src/patient';
 import { theme, radius } from '../../src/theme';
@@ -22,8 +23,15 @@ export default function Schedule() {
   const load = useCallback(async () => {
     if (!currentPatient) { setMeds([]); return; }
     try {
-      const m = await api.get(`/medicines?patient_id=${currentPatient.id}`);
-      setMeds(m.data);
+      const q = query(collection(db, 'medicines'), where('patientId', '==', currentPatient.id));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Map times back to strings for display if needed
+      const mapped = list.map((m: any) => ({
+        ...m,
+        times: m.times ? m.times.map((t: any) => `${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}`) : []
+      }));
+      setMeds(mapped);
     } catch { /* ignore */ }
   }, [currentPatient]);
 
@@ -31,8 +39,11 @@ export default function Schedule() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const remove = async (id: string) => {
-    try { await api.delete(`/medicines/${id}`); load(); }
-    catch (e: any) { Alert.alert('Error', apiError(e)); }
+    try { 
+      await deleteDoc(doc(db, 'medicines', id)); 
+      load(); 
+    }
+    catch (e: any) { Alert.alert('Error', e.message || 'Failed to delete'); }
   };
 
   return (

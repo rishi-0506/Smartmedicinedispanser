@@ -1,62 +1,15 @@
-import axios from 'axios';
-import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+// ============================================================================
+// api.ts — LEGACY SHIM (no longer used by any screen)
+//
+// All app data now flows through Firebase Auth + Firestore + RTDB.
+// This file is kept only to avoid breaking any stray imports during transition.
+// It does NOT connect to any backend server.
+// ============================================================================
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-// Loud, single-shot warning so a missing env var is obvious instead of
-// surfacing as a confusing `404` on the first network call.
-if (!BASE) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    '[api] EXPO_PUBLIC_BACKEND_URL is not set.\n' +
-    '  Copy frontend/.env.example to frontend/.env, set the URL, then\n' +
-    '  restart Expo with:   npx expo start -c\n' +
-    '  Falling back to http://localhost:8000 for local development.'
-  );
-}
-
-const RESOLVED_BASE = BASE || 'http://localhost:8000';
-
-export const api = axios.create({
-  baseURL: `${RESOLVED_BASE}/api`,
-  timeout: 30000,
-});
-
-const TOKEN_KEY = 'trolley_access_token';
-
-export async function saveToken(token: string) {
-  if (Platform.OS === 'web') {
-    try { localStorage.setItem(TOKEN_KEY, token); } catch {}
-  } else {
-    await SecureStore.setItemAsync(TOKEN_KEY, token);
-  }
-}
-
-export async function getToken(): Promise<string | null> {
-  if (Platform.OS === 'web') {
-    try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
-  }
-  return await SecureStore.getItemAsync(TOKEN_KEY);
-}
-
-export async function clearToken() {
-  if (Platform.OS === 'web') {
-    try { localStorage.removeItem(TOKEN_KEY); } catch {}
-  } else {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
-  }
-}
-
-api.interceptors.request.use(async (config) => {
-  const t = await getToken();
-  if (t) config.headers.Authorization = `Bearer ${t}`;
-  return config;
-});
-
-export function apiError(e: any): string {
-  const d = e?.response?.data?.detail;
-  if (!d) return e?.message || 'Network error';
+export function apiError(e: unknown): string {
+  const err = e as any;
+  const d = err?.response?.data?.detail;
+  if (!d) return err?.message || 'Unknown error';
   if (typeof d === 'string') return d;
   if (Array.isArray(d)) return d.map((x: any) => x?.msg || JSON.stringify(x)).join(' ');
   return String(d);

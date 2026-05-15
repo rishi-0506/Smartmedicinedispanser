@@ -6,13 +6,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
 import { usePatient } from '../../src/patient';
 import { theme, radius } from '../../src/theme';
 import { GlassCard } from '../../src/GlassCard';
 import { PulseDot } from '../../src/Pulse';
 import { listenToDispenserState, DispenserState } from '../../src/firebase/dispenserService';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../src/firebase/firebaseConfig';
 
 type Trolley = { battery: number; wifi: boolean; online: boolean; compartments: any[]; last_sync: string };
 type Dose = { id: string; medicine_name: string; dosage: string; compartment: number; scheduled_at: string; status: string };
@@ -60,18 +61,78 @@ export default function Dashboard() {
     return () => { if (unsub) unsub(); };
   }, []);
 
+
+
   const load = useCallback(async () => {
     if (!currentPatient) return;
     try {
-      const [t, d, s] = await Promise.all([
-        api.get(`/trolley/${currentPatient.id}`),
-        api.get(`/doses/today?patient_id=${currentPatient.id}`),
-        api.get(`/doses/stats?patient_id=${currentPatient.id}`),
-      ]);
-      setTrolley(t.data);
-      setDoses(d.data);
-      setStats(s.data);
-    } catch { /* ignore */ }
+      // 1. Fetch Medicines
+      const medQ = query(collection(db, 'medicines'), where('patientId', '==', currentPatient.id));
+      const medSnap = await getDocs(medQ);
+      const medicines = medSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      // 2. Fetch Dose Logs for today
+      const todayStr = new Date().toISOString().split('T')[0];
+      const startOfToday = new Date(todayStr + 'T00:00:00Z').toISOString();
+      const endOfToday = new Date(todayStr + 'T23:59:59Z').toISOString();
+      
+      const logQ = query(collection(db, 'doseLogs'), 
+        where('patientId', '==', currentPatient.id),
+        where('scheduled_at', '>=', startOfToday),
+        where('scheduled_at', '<=', endOfToday)
+      );
+      const logSnap = await getDocs(logQ);
+      const logs = logSnap.docs.map(d => d.data() as any);
+
+      // 3. Generate Doses list
+      const generatedDoses: Dose[] = [];
+      medicines.forEach(med => {
+        if (!med.times) return;
+        med.times.forEach((t: any) => {
+          const scheduledDate = new Date(todayStr);
+          scheduledDate.setHours(t.hour, t.minute, 0, 0);
+          const iso = scheduledDate.toISOString();
+          
+          const existingLog = logs.find(l => l.medicineId === med.id && new Date(l.scheduled_at).getTime() === scheduledDate.getTime());
+          
+          generatedDoses.push({
+            id: `${med.id}_${scheduledDate.getTime()}`,
+            medicineId: med.id, // custom for navigation
+            medicine_name: med.name,
+            dosage: med.dosage,
+            compartment: med.compartment,
+            scheduled_at: iso,
+            status: existingLog ? existingLog.status : 'pending',
+          } as any);
+        });
+      });
+      
+      setDoses(generatedDoses.sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime()));
+
+      // 4. Calculate Stats (mocked from today for now)
+      const total = generatedDoses.length;
+      const taken = generatedDoses.filter(d => d.status === 'taken').length;
+      const missed = generatedDoses.filter(d => d.status === 'missed').length;
+      setStats({
+        total,
+        taken,
+        missed,
+        pending: generatedDoses.filter(d => d.status === 'pending').length,
+        adherence: total > 0 ? Math.round((taken / total) * 100) : 100,
+      });
+
+      // 5. Mock Trolley Data
+      const loadedCompartments = medicines.map(m => m.compartment);
+      setTrolley({
+        battery: 85,
+        wifi: true,
+        online: true,
+        compartments: [1, 2, 3, 4, 5, 6].map(id => ({ id, loaded: loadedCompartments.includes(id) })),
+        last_sync: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn("Failed to load dashboard data", e);
+    }
   }, [currentPatient]);
 
   useEffect(() => { load(); }, [load]);

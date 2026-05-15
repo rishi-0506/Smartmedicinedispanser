@@ -3,7 +3,7 @@
 // via Firebase Realtime Database.
 //
 // Data path written by the app and read by ESP32:
-//   devices/{DEVICE_ID}/schedule/drawer{1..4}
+//   devices/{DEVICE_ID}/drawers/drawer{1..4}
 //
 // Data path written by ESP32 and read by the app:
 //   devices/{DEVICE_ID}/state
@@ -22,8 +22,7 @@ export const DEVICE_ID = 'dispenser_001';
 export type DrawerSchedule = {
   drawerNumber: number; // 1..4
   medicine: string;
-  hour: number;         // 0..23
-  minute: number;       // 0..59
+  times: { hour: number; minute: number }[];
   enabled: boolean;
 };
 
@@ -59,11 +58,10 @@ export async function saveDrawerSchedule(schedule: DrawerSchedule): Promise<Sync
 
   try {
     const drawerKey = `drawer${schedule.drawerNumber}`;
-    await set(ref(db, `devices/${DEVICE_ID}/schedule/${drawerKey}`), {
+    await set(ref(db, `devices/${DEVICE_ID}/drawers/${drawerKey}`), {
       enabled: schedule.enabled,
       medicine: schedule.medicine,
-      hour: schedule.hour,
-      minute: schedule.minute,
+      times: schedule.times,
       updatedAt: Date.now(),
     });
     await update(ref(db, `devices/${DEVICE_ID}/state`), {

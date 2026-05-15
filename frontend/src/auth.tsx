@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { api, saveToken, clearToken, getToken, apiError } from './api';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as fbSignOut, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from './firebase/firebaseConfig';
 
 type User = { id: string; email: string; name: string; role: 'caregiver' | 'patient' };
 type AuthState = {
@@ -16,41 +18,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null | undefined>(undefined);
 
   useEffect(() => {
-    (async () => {
-      const t = await getToken();
-      if (!t) { setUser(null); return; }
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setUser(null);
+        return;
+      }
       try {
-        const r = await api.get('/auth/me');
-        setUser(r.data);
-      } catch {
-        await clearToken();
+        const docRef = doc(db, 'users', fbUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setUser({ id: fbUser.uid, ...docSnap.data() } as User);
+        } else {
+          // If no user doc exists, fallback to basic info
+          setUser({ id: fbUser.uid, email: fbUser.email || '', name: 'User', role: 'patient' });
+        }
+      } catch (e) {
+        console.warn('Failed to fetch user profile:', e);
         setUser(null);
       }
-    })();
+    });
+    return unsub;
   }, []);
 
   const signIn = async (email: string, password: string) => {
     try {
-      const r = await api.post('/auth/login', { email, password });
-      await saveToken(r.data.access_token);
-      setUser(r.data.user);
-    } catch (e) {
-      throw new Error(apiError(e));
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (e: any) {
+      throw new Error(e.message || 'Login failed');
     }
   };
 
   const signUp = async (email: string, password: string, name: string, role: 'caregiver' | 'patient') => {
     try {
-      const r = await api.post('/auth/register', { email, password, name, role });
-      await saveToken(r.data.access_token);
-      setUser(r.data.user);
-    } catch (e) {
-      throw new Error(apiError(e));
+      const { user: fbUser } = await createUserWithEmailAndPassword(auth, email, password);
+      // Create user profile in Firestore
+      await setDoc(doc(db, 'users', fbUser.uid), {
+        email: fbUser.email,
+        name,
+        role,
+        createdAt: serverTimestamp(),
+      });
+      // The onAuthStateChanged listener will pick this up and set the user state.
+    } catch (e: any) {
+      throw new Error(e.message || 'Registration failed');
     }
   };
 
   const signOut = async () => {
-    await clearToken();
+    await fbSignOut(auth);
     setUser(null);
   };
 

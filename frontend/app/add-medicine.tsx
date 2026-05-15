@@ -5,8 +5,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { api, apiError } from '../src/api';
 import { saveDrawerSchedule, parseTime, MAX_DRAWERS } from '../src/firebase/dispenserService';
+import { db } from '../src/firebase/firebaseConfig';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { useAuth } from '../src/auth';
 import { theme, radius } from '../src/theme';
 
 const COLORS = ['#00F0FF', '#00FF9D', '#FFB800', '#FF3366', '#8AB4F8'];
@@ -14,6 +16,7 @@ const COLORS = ['#00F0FF', '#00FF9D', '#FFB800', '#FF3366', '#8AB4F8'];
 export default function AddMedicine() {
   const { patientId } = useLocalSearchParams<{ patientId: string }>();
   const router = useRouter();
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [dosage, setDosage] = useState('');
   const [compartment, setCompartment] = useState(1);
@@ -41,25 +44,37 @@ export default function AddMedicine() {
       Alert.alert('Missing', 'Fill name, dosage, and at least one time');
       return;
     }
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in');
+      return;
+    }
     setLoading(true);
     setSyncMsg(null);
     try {
-      // 1) Existing backend save (MongoDB / FastAPI) — unchanged primary flow
-      await api.post('/medicines', {
-        patient_id: patientId, name, dosage, compartment, times, notes, color,
+      const parsedTimes = times.map(t => parseTime(t)).filter(Boolean) as { hour: number; minute: number }[];
+      
+      // 1) Save to Firestore
+      await addDoc(collection(db, 'medicines'), {
+        patientId,
+        name,
+        dosage,
+        compartment,
+        times: parsedTimes,
+        notes,
+        color,
+        enabled: true,
+        createdBy: user.id,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
-      // 2) Additive Firebase sync for ESP32 dispenser (drawers 1..MAX_DRAWERS only).
-      // Uses the FIRST scheduled time for the drawer. If credentials aren't set,
-      // the service silently returns skipped=true and the app continues normally.
+      // 2) Sync with ESP32
       if (compartment <= MAX_DRAWERS) {
-        const t = parseTime(times[0]);
-        if (t) {
+        if (parsedTimes.length > 0) {
           const result = await saveDrawerSchedule({
             drawerNumber: compartment,
             medicine: name,
-            hour: t.hour,
-            minute: t.minute,
+            times: parsedTimes,
             enabled: true,
           });
           if (result.ok) {
@@ -74,10 +89,9 @@ export default function AddMedicine() {
         setSyncMsg({ kind: 'warn', text: `Saved locally · ESP32 only supports drawers 1–${MAX_DRAWERS}` });
       }
 
-      // Give the user a moment to read the sync status, then return
       setTimeout(() => router.back(), 900);
     } catch (e: any) {
-      Alert.alert('Error', apiError(e));
+      Alert.alert('Error', e.message || 'Failed to save medicine');
     } finally {
       setLoading(false);
     }

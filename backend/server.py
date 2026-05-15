@@ -5,34 +5,161 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import json
 import logging
 import uuid
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
+from functools import partial
+import asyncio
+
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-
-# --------- LLM TTS ---------
-try:
-    from emergentintegrations.llm.openai import OpenAITextToSpeech
-    _tts_client = OpenAITextToSpeech(api_key=os.environ.get("EMERGENT_LLM_KEY"))
-except Exception as _e:
-    _tts_client = None
 
 # --------- Logging ---------
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("trolley")
 
-# --------- DB ---------
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# --------- Firebase Init ---------
+_firebase_cred_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_KEY")
+_firebase_cred_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+
+if not firebase_admin._apps:
+    if _firebase_cred_json:
+        cred_dict = json.loads(_firebase_cred_json)
+        cred = credentials.Certificate(cred_dict)
+    elif _firebase_cred_path:
+        cred = credentials.Certificate(_firebase_cred_path)
+    else:
+        raise RuntimeError(
+            "Firebase credentials not set. "
+            "Set FIREBASE_SERVICE_ACCOUNT_KEY (path to JSON file) or "
+            "FIREBASE_SERVICE_ACCOUNT_JSON (JSON string) in .env"
+        )
+    firebase_admin.initialize_app(cred)
+
+_fs = firestore.client()
+
+# --------- Firestore helpers ---------
+# Wrap synchronous Firestore calls so they don't block the async event loop.
+
+async def _run(func, *args, **kwargs):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+
+
+def _col(name: str):
+    return _fs.collection(name)
+
+
+def _strip(doc_snap) -> Optional[dict]:
+    """Convert a Firestore DocumentSnapshot to a plain dict (or None)."""
+    if doc_snap and doc_snap.exists:
+        return doc_snap.to_dict()
+    return None
+
+
+async def _find_one(collection: str, field: str, value) -> Optional[dict]:
+    col = _col(collection)
+    def _query():
+        results = col.where(field, "==", value).limit(1).get()
+        return results[0] if results else None
+    snap = await _run(_query)
+    return _strip(snap)
+
+
+async def _find_one_multi(collection: str, filters: dict) -> Optional[dict]:
+    """Filter by multiple equality conditions."""
+    col = _col(collection)
+    def _query():
+        q = col
+        for k, v in filters.items():
+            q = q.where(k, "==", v)
+        results = q.limit(1).get()
+        return results[0] if results else None
+    snap = await _run(_query)
+    return _strip(snap)
+
+
+async def _find_many(collection: str, filters: dict = None, order_by: str = None, limit: int = 500) -> List[dict]:
+    col = _col(collection)
+    def _query():
+        q = col
+        if filters:
+            for k, v in filters.items():
+                q = q.where(k, "==", v)
+        if order_by:
+            q = q.order_by(order_by)
+        return [s.to_dict() for s in q.limit(limit).get()]
+    return await _run(_query)
+
+
+async def _find_many_gte(collection: str, field: str, value, extra_filters: dict = None, order_by: str = None, limit: int = 500) -> List[dict]:
+    col = _col(collection)
+    def _query():
+        q = col.where(field, ">=", value)
+        if extra_filters:
+            for k, v in extra_filters.items():
+                q = q.where(k, "==", v)
+        if order_by:
+            q = q.order_by(order_by)
+        return [s.to_dict() for s in q.limit(limit).get()]
+    return await _run(_query)
+
+
+async def _find_many_range(collection: str, field: str, gte, lt, extra_filters: dict = None, order_by: str = None, limit: int = 200) -> List[dict]:
+    col = _col(collection)
+    def _query():
+        q = col.where(field, ">=", gte).where(field, "<", lt)
+        if extra_filters:
+            for k, v in extra_filters.items():
+                q = q.where(k, "==", v)
+        if order_by:
+            q = q.order_by(order_by)
+        return [s.to_dict() for s in q.limit(limit).get()]
+    return await _run(_query)
+
+
+async def _insert(collection: str, doc: dict):
+    doc_id = doc.get("id", str(uuid.uuid4()))
+    await _run(_col(collection).document(doc_id).set, doc)
+
+
+async def _update(collection: str, doc_id: str, data: dict):
+    await _run(_col(collection).document(doc_id).update, data)
+
+
+async def _delete(collection: str, doc_id: str):
+    await _run(_col(collection).document(doc_id).delete)
+
+
+async def _delete_many(collection: str, field: str, value):
+    col = _col(collection)
+    def _do():
+        snaps = col.where(field, "==", value).get()
+        for s in snaps:
+            s.reference.delete()
+    await _run(_do)
+
+
+async def _count_where(collection: str, field: str, value) -> int:
+    col = _col(collection)
+    def _do():
+        return len(col.where(field, "==", value).get())
+    return await _run(_do)
+
+
+async def _get_doc(collection: str, doc_id: str) -> Optional[dict]:
+    snap = await _run(_col(collection).document(doc_id).get)
+    return _strip(snap)
+
 
 # --------- App ---------
 app = FastAPI(title="Smart Trolley Medicine Dispenser API")
@@ -76,9 +203,10 @@ async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depen
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    user = await _find_one("users", "id", payload["sub"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    user.pop("password_hash", None)
     return user
 
 
@@ -111,9 +239,9 @@ class PatientIn(BaseModel):
 class MedicineIn(BaseModel):
     patient_id: str
     name: str
-    dosage: str  # e.g. "500mg"
-    compartment: int  # 1-6
-    times: List[str]  # ["08:00","14:00","20:00"]
+    dosage: str
+    compartment: int
+    times: List[str]
     notes: Optional[str] = ""
     color: Optional[str] = "#00F0FF"
 
@@ -122,17 +250,11 @@ class DoseUpdate(BaseModel):
     status: Literal["taken", "missed", "skipped", "snoozed"]
 
 
-class TTSIn(BaseModel):
-    text: str
-    voice: str = "nova"
-    language: str = "en"
-
-
 # ------------- Auth Endpoints -------------
 @api.post("/auth/register", response_model=AuthOut)
 async def register(body: RegisterIn):
     email = body.email.lower()
-    existing = await db.users.find_one({"email": email})
+    existing = await _find_one("users", "email", email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     user_id = str(uuid.uuid4())
@@ -144,21 +266,19 @@ async def register(body: RegisterIn):
         "password_hash": hash_password(body.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.users.insert_one(user_doc)
+    await _insert("users", user_doc)
 
-    # If patient, auto-create patient profile + trolley
     if body.role == "patient":
         await _create_patient_profile_for_user(user_id, body.name)
 
     token = create_access_token(user_id, email, body.role)
     user_doc.pop("password_hash", None)
-    user_doc.pop("_id", None)
     return {"access_token": token, "user": user_doc}
 
 
 async def _create_patient_profile_for_user(user_id: str, name: str):
     pid = str(uuid.uuid4())
-    await db.patients.insert_one({
+    await _insert("patients", {
         "id": pid,
         "user_id": user_id,
         "caregiver_id": None,
@@ -169,7 +289,8 @@ async def _create_patient_profile_for_user(user_id: str, name: str):
         "language": "en",
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
-    await db.trolley_status.insert_one({
+    await _insert("trolley_status", {
+        "id": pid,
         "patient_id": pid,
         "battery": 92,
         "wifi": True,
@@ -183,7 +304,7 @@ async def _create_patient_profile_for_user(user_id: str, name: str):
 @api.post("/auth/login", response_model=AuthOut)
 async def login(body: LoginIn):
     email = body.email.lower()
-    user = await db.users.find_one({"email": email})
+    user = await _find_one("users", "email", email)
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email, user["role"])
@@ -201,9 +322,9 @@ async def me(user: dict = Depends(get_current_user)):
 @api.get("/patients")
 async def list_patients(user: dict = Depends(get_current_user)):
     if user["role"] == "caregiver":
-        patients = await db.patients.find({"caregiver_id": user["id"]}, {"_id": 0}).to_list(100)
+        patients = await _find_many("patients", {"caregiver_id": user["id"]})
     else:
-        patients = await db.patients.find({"user_id": user["id"]}, {"_id": 0}).to_list(10)
+        patients = await _find_many("patients", {"user_id": user["id"]})
     return patients
 
 
@@ -211,11 +332,10 @@ async def list_patients(user: dict = Depends(get_current_user)):
 async def my_patient(user: dict = Depends(get_current_user)):
     if user["role"] != "patient":
         raise HTTPException(403, "Only patients can fetch their own profile")
-    p = await db.patients.find_one({"user_id": user["id"]}, {"_id": 0})
+    p = await _find_one("patients", "user_id", user["id"])
     if not p:
-        # auto-create on demand in case missing
         await _create_patient_profile_for_user(user["id"], user.get("name", "Patient"))
-        p = await db.patients.find_one({"user_id": user["id"]}, {"_id": 0})
+        p = await _find_one("patients", "user_id", user["id"])
     return p
 
 
@@ -235,9 +355,9 @@ async def create_patient(body: PatientIn, user: dict = Depends(get_current_user)
         "language": body.language,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.patients.insert_one(doc)
-    # initialize trolley status
-    await db.trolley_status.insert_one({
+    await _insert("patients", doc)
+    await _insert("trolley_status", {
+        "id": pid,
         "patient_id": pid,
         "battery": 87,
         "wifi": True,
@@ -245,13 +365,12 @@ async def create_patient(body: PatientIn, user: dict = Depends(get_current_user)
         "compartments": [{"id": i, "loaded": False, "medicine_id": None} for i in range(1, 7)],
         "last_sync": datetime.now(timezone.utc).isoformat(),
     })
-    doc.pop("_id", None)
     return doc
 
 
 @api.get("/patients/{patient_id}")
 async def get_patient(patient_id: str, user: dict = Depends(get_current_user)):
-    p = await db.patients.find_one({"id": patient_id}, {"_id": 0})
+    p = await _find_one("patients", "id", patient_id)
     if not p:
         raise HTTPException(404, "Patient not found")
     return p
@@ -260,47 +379,54 @@ async def get_patient(patient_id: str, user: dict = Depends(get_current_user)):
 # ------------- Medicines -------------
 @api.get("/medicines")
 async def list_medicines(patient_id: Optional[str] = None, user: dict = Depends(get_current_user)):
-    q = {}
-    if patient_id:
-        q["patient_id"] = patient_id
-    meds = await db.medicines.find(q, {"_id": 0}).to_list(200)
-    return meds
+    filters = {"patient_id": patient_id} if patient_id else {}
+    return await _find_many("medicines", filters, limit=200)
 
 
 @api.post("/medicines")
 async def create_medicine(body: MedicineIn, user: dict = Depends(get_current_user)):
     mid = str(uuid.uuid4())
-    doc = body.dict()
+    doc = body.model_dump()
     doc["id"] = mid
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
-    await db.medicines.insert_one(doc)
-    # mark compartment loaded
-    await db.trolley_status.update_one(
-        {"patient_id": body.patient_id, "compartments.id": body.compartment},
-        {"$set": {"compartments.$.loaded": True, "compartments.$.medicine_id": mid}}
-    )
-    # generate today's doses
+    await _insert("medicines", doc)
+
+    # Mark compartment as loaded in trolley_status
+    trolley = await _find_one("trolley_status", "patient_id", body.patient_id)
+    if trolley:
+        compartments = trolley.get("compartments", [])
+        for c in compartments:
+            if c["id"] == body.compartment:
+                c["loaded"] = True
+                c["medicine_id"] = mid
+        await _update("trolley_status", trolley["id"], {"compartments": compartments})
+
     await _generate_doses_for_medicine(doc)
-    doc.pop("_id", None)
     return doc
 
 
 @api.delete("/medicines/{medicine_id}")
 async def delete_medicine(medicine_id: str, user: dict = Depends(get_current_user)):
-    med = await db.medicines.find_one({"id": medicine_id})
+    med = await _find_one("medicines", "id", medicine_id)
     if not med:
         raise HTTPException(404, "Medicine not found")
-    await db.medicines.delete_one({"id": medicine_id})
-    await db.trolley_status.update_one(
-        {"patient_id": med["patient_id"], "compartments.medicine_id": medicine_id},
-        {"$set": {"compartments.$.loaded": False, "compartments.$.medicine_id": None}}
-    )
-    await db.doses.delete_many({"medicine_id": medicine_id, "status": "pending"})
+    await _delete("medicines", medicine_id)
+
+    # Unload compartment
+    trolley = await _find_one("trolley_status", "patient_id", med["patient_id"])
+    if trolley:
+        compartments = trolley.get("compartments", [])
+        for c in compartments:
+            if c.get("medicine_id") == medicine_id:
+                c["loaded"] = False
+                c["medicine_id"] = None
+        await _update("trolley_status", trolley["id"], {"compartments": compartments})
+
+    await _delete_many("doses", "medicine_id", medicine_id)
     return {"ok": True}
 
 
 async def _generate_doses_for_medicine(med: dict):
-    """Create pending dose entries for today for the given medicine."""
     today = datetime.now(timezone.utc).date()
     for t in med["times"]:
         try:
@@ -308,12 +434,12 @@ async def _generate_doses_for_medicine(med: dict):
         except Exception:
             continue
         scheduled = datetime(today.year, today.month, today.day, hh, mm, tzinfo=timezone.utc)
-        existing = await db.doses.find_one({
+        existing = await _find_one_multi("doses", {
             "medicine_id": med["id"],
             "scheduled_at": scheduled.isoformat()
         })
         if not existing:
-            await db.doses.insert_one({
+            await _insert("doses", {
                 "id": str(uuid.uuid4()),
                 "medicine_id": med["id"],
                 "patient_id": med["patient_id"],
@@ -330,10 +456,8 @@ async def _generate_doses_for_medicine(med: dict):
 @api.get("/doses")
 async def list_doses(patient_id: Optional[str] = None, days: int = 7, user: dict = Depends(get_current_user)):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    q = {"scheduled_at": {"$gte": since}}
-    if patient_id:
-        q["patient_id"] = patient_id
-    doses = await db.doses.find(q, {"_id": 0}).sort("scheduled_at", 1).to_list(500)
+    extra = {"patient_id": patient_id} if patient_id else None
+    doses = await _find_many_gte("doses", "scheduled_at", since, extra_filters=extra, order_by="scheduled_at")
     return doses
 
 
@@ -342,31 +466,28 @@ async def doses_today(patient_id: Optional[str] = None, user: dict = Depends(get
     today = datetime.now(timezone.utc).date()
     start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc).isoformat()
     end = (datetime(today.year, today.month, today.day, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
-    q = {"scheduled_at": {"$gte": start, "$lt": end}}
-    if patient_id:
-        q["patient_id"] = patient_id
-    doses = await db.doses.find(q, {"_id": 0}).sort("scheduled_at", 1).to_list(200)
+    extra = {"patient_id": patient_id} if patient_id else None
+    doses = await _find_many_range("doses", "scheduled_at", start, end, extra_filters=extra, order_by="scheduled_at")
     return doses
 
 
 @api.patch("/doses/{dose_id}")
 async def update_dose(dose_id: str, body: DoseUpdate, user: dict = Depends(get_current_user)):
-    update = {"status": body.status}
-    if body.status == "taken":
-        update["taken_at"] = datetime.now(timezone.utc).isoformat()
-    res = await db.doses.update_one({"id": dose_id}, {"$set": update})
-    if res.matched_count == 0:
+    dose = await _find_one("doses", "id", dose_id)
+    if not dose:
         raise HTTPException(404, "Dose not found")
+    update_data = {"status": body.status}
+    if body.status == "taken":
+        update_data["taken_at"] = datetime.now(timezone.utc).isoformat()
+    await _update("doses", dose_id, update_data)
     return {"ok": True}
 
 
 @api.get("/doses/stats")
 async def adherence_stats(patient_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    q = {"scheduled_at": {"$gte": since}}
-    if patient_id:
-        q["patient_id"] = patient_id
-    all_doses = await db.doses.find(q, {"_id": 0}).to_list(500)
+    extra = {"patient_id": patient_id} if patient_id else None
+    all_doses = await _find_many_gte("doses", "scheduled_at", since, extra_filters=extra)
     total = len(all_doses)
     taken = sum(1 for d in all_doses if d["status"] == "taken")
     missed = sum(1 for d in all_doses if d["status"] == "missed")
@@ -386,7 +507,7 @@ async def adherence_stats(patient_id: Optional[str] = None, user: dict = Depends
 # ------------- Trolley -------------
 @api.get("/trolley/{patient_id}")
 async def get_trolley(patient_id: str, user: dict = Depends(get_current_user)):
-    status = await db.trolley_status.find_one({"patient_id": patient_id}, {"_id": 0})
+    status = await _find_one("trolley_status", "patient_id", patient_id)
     if not status:
         raise HTTPException(404, "Trolley not found")
     return status
@@ -394,27 +515,10 @@ async def get_trolley(patient_id: str, user: dict = Depends(get_current_user)):
 
 @api.post("/trolley/{patient_id}/dispense/{compartment}")
 async def dispense(patient_id: str, compartment: int, user: dict = Depends(get_current_user)):
-    """Simulated dispense action."""
-    status = await db.trolley_status.find_one({"patient_id": patient_id})
+    status = await _find_one("trolley_status", "patient_id", patient_id)
     if not status:
         raise HTTPException(404, "Trolley not found")
     return {"ok": True, "compartment": compartment, "message": f"Compartment {compartment} dispensed"}
-
-
-# ------------- TTS -------------
-@api.post("/tts")
-async def tts(body: TTSIn, user: dict = Depends(get_current_user)):
-    if _tts_client is None:
-        raise HTTPException(500, "TTS service unavailable")
-    text = body.text[:500]
-    try:
-        audio_b64 = await _tts_client.generate_speech_base64(
-            text=text, model="tts-1", voice=body.voice
-        )
-        return {"audio_base64": audio_b64, "mime": "audio/mp3"}
-    except Exception as e:
-        logger.error(f"TTS failed: {e}")
-        raise HTTPException(500, f"TTS failed: {str(e)}")
 
 
 @api.get("/")
@@ -424,13 +528,12 @@ async def root():
 
 # ------------- Seed -------------
 async def seed_data():
-    # Admin caregiver
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
-    existing = await db.users.find_one({"email": admin_email})
+    existing = await _find_one("users", "email", admin_email)
     if not existing:
         admin_id = str(uuid.uuid4())
-        await db.users.insert_one({
+        await _insert("users", {
             "id": admin_id,
             "email": admin_email,
             "name": "Dr. Aria Voss",
@@ -441,17 +544,13 @@ async def seed_data():
     else:
         admin_id = existing["id"]
         if not verify_password(admin_password, existing["password_hash"]):
-            await db.users.update_one(
-                {"id": admin_id},
-                {"$set": {"password_hash": hash_password(admin_password)}}
-            )
+            await _update("users", admin_id, {"password_hash": hash_password(admin_password)})
 
-    # Demo patient user
     patient_email = "patient@trolley.health"
-    pu = await db.users.find_one({"email": patient_email})
+    pu = await _find_one("users", "email", patient_email)
     if not pu:
         patient_user_id = str(uuid.uuid4())
-        await db.users.insert_one({
+        await _insert("users", {
             "id": patient_user_id,
             "email": patient_email,
             "name": "Aarav Sharma",
@@ -462,11 +561,10 @@ async def seed_data():
     else:
         patient_user_id = pu["id"]
 
-    # Demo patient profile (linked to BOTH the caregiver and the patient user)
-    p = await db.patients.find_one({"caregiver_id": admin_id, "name": "Aarav Sharma"})
+    p = await _find_one_multi("patients", {"caregiver_id": admin_id, "name": "Aarav Sharma"})
     if not p:
         pid = str(uuid.uuid4())
-        await db.patients.insert_one({
+        await _insert("patients", {
             "id": pid,
             "caregiver_id": admin_id,
             "user_id": patient_user_id,
@@ -477,15 +575,8 @@ async def seed_data():
             "language": "hi",
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
-    else:
-        # Backfill user_id on existing seeded record
-        if not p.get("user_id"):
-            await db.patients.update_one({"id": p["id"]}, {"$set": {"user_id": patient_user_id}})
-        pid = p["id"]
-        # Skip the rest if already populated
-        if await db.medicines.count_documents({"patient_id": pid}) > 0:
-            return
-        await db.trolley_status.insert_one({
+        await _insert("trolley_status", {
+            "id": pid,
             "patient_id": pid,
             "battery": 87,
             "wifi": True,
@@ -494,7 +585,6 @@ async def seed_data():
             "last_sync": datetime.now(timezone.utc).isoformat(),
         })
 
-        # Sample medicines
         meds = [
             {"name": "Amlodipine", "dosage": "5mg", "compartment": 1, "times": ["08:00", "20:00"], "color": "#00F0FF"},
             {"name": "Donepezil", "dosage": "10mg", "compartment": 2, "times": ["09:00"], "color": "#00FF9D"},
@@ -513,18 +603,20 @@ async def seed_data():
                 "color": m["color"],
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
-            await db.medicines.insert_one(doc)
-            await db.trolley_status.update_one(
-                {"patient_id": pid, "compartments.id": m["compartment"]},
-                {"$set": {"compartments.$.loaded": True, "compartments.$.medicine_id": mid}}
-            )
-            # Generate doses for today
+            await _insert("medicines", doc)
+            trolley = await _find_one("trolley_status", "patient_id", pid)
+            if trolley:
+                compartments = trolley.get("compartments", [])
+                for c in compartments:
+                    if c["id"] == m["compartment"]:
+                        c["loaded"] = True
+                        c["medicine_id"] = mid
+                await _update("trolley_status", pid, {"compartments": compartments})
             await _generate_doses_for_medicine(doc)
 
-        # Mark some past doses (yesterday) for adherence chart
         yest = datetime.now(timezone.utc).date() - timedelta(days=1)
         for hh in [8, 9, 13, 20]:
-            await db.doses.insert_one({
+            await _insert("doses", {
                 "id": str(uuid.uuid4()),
                 "medicine_id": "history",
                 "patient_id": pid,
@@ -535,24 +627,18 @@ async def seed_data():
                 "status": "taken" if hh != 13 else "missed",
                 "taken_at": datetime.now(timezone.utc).isoformat() if hh != 13 else None,
             })
+    else:
+        if not p.get("user_id"):
+            await _update("patients", p["id"], {"user_id": patient_user_id})
 
 
 @app.on_event("startup")
 async def on_startup():
     try:
-        await db.users.create_index("email", unique=True)
-        await db.patients.create_index("caregiver_id")
-        await db.medicines.create_index("patient_id")
-        await db.doses.create_index("patient_id")
         await seed_data()
         logger.info("Startup complete; seed data ensured.")
     except Exception as e:
         logger.error(f"Startup error: {e}")
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    client.close()
 
 
 # CORS

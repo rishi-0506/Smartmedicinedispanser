@@ -7,7 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api, apiError } from '../src/api';
+import { useAuth } from '../src/auth';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../src/firebase/firebaseConfig';
 import { usePatient } from '../src/patient';
 import { theme, radius } from '../src/theme';
 
@@ -22,6 +24,7 @@ const LANGS = [
 export default function AddPatient() {
   const router = useRouter();
   const { refresh, setCurrentPatient } = usePatient();
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [condition, setCondition] = useState('');
@@ -34,16 +37,27 @@ export default function AddPatient() {
       Alert.alert('Missing', 'Name and age are required');
       return;
     }
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in');
+      return;
+    }
     setLoading(true);
     try {
-      const r = await api.post('/patients', {
-        name, age: a, condition, language, avatar: '',
+      const docRef = await addDoc(collection(db, 'patients'), {
+        caregiver_id: user.role === 'caregiver' ? user.id : null,
+        user_id: user.role === 'patient' ? user.id : null,
+        name,
+        age: a,
+        condition,
+        language,
+        avatar: '',
+        createdAt: serverTimestamp(),
       });
       await refresh();
-      setCurrentPatient(r.data);
+      setCurrentPatient({ id: docRef.id, name, age: a, condition, language, caregiver_id: user.role === 'caregiver' ? user.id : null, user_id: user.role === 'patient' ? user.id : null });
       router.back();
     } catch (e: any) {
-      Alert.alert('Error', apiError(e));
+      Alert.alert('Error', e.message || 'Failed to add patient');
     } finally {
       setLoading(false);
     }

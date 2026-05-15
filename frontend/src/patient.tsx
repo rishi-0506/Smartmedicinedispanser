@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { api } from './api';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from './firebase/firebaseConfig';
 import { useAuth } from './auth';
 
 type Patient = {
@@ -33,14 +34,20 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
     if (!user) { setPatients([]); setCurrentPatient(null); return; }
     setLoading(true);
     try {
-      const r = await api.get('/patients');
-      const list: Patient[] = r.data || [];
+      const q = user.role === 'caregiver'
+        ? query(collection(db, 'patients'), where('caregiver_id', '==', user.id))
+        : query(collection(db, 'patients'), where('user_id', '==', user.id));
+        
+      const snapshot = await getDocs(q);
+      const list: Patient[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
+      
       setPatients(list);
       setCurrentPatient(prev => {
         if (prev && list.find(p => p.id === prev.id)) return prev;
         return list[0] || null;
       });
-    } catch {
+    } catch (e) {
+      console.warn("Failed to fetch patients", e);
       setPatients([]);
     } finally {
       setLoading(false);

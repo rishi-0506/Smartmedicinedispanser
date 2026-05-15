@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { api } from '../../src/api';
 import { usePatient } from '../../src/patient';
 import { theme } from '../../src/theme';
 import { GlassCard } from '../../src/GlassCard';
 import { Ionicons } from '@expo/vector-icons';
+import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { db } from '../../src/firebase/firebaseConfig';
 
 function fmt(iso: string) {
   const d = new Date(iso);
@@ -18,15 +19,34 @@ export default function History() {
   const [stats, setStats] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+
+
   const load = useCallback(async () => {
     if (!currentPatient) return;
     try {
-      const [d, s] = await Promise.all([
-        api.get(`/doses?patient_id=${currentPatient.id}&days=14`),
-        api.get(`/doses/stats?patient_id=${currentPatient.id}`),
-      ]);
-      setDoses(d.data.slice().reverse());
-      setStats(s.data);
+      const logQ = query(
+        collection(db, 'doseLogs'),
+        where('patientId', '==', currentPatient.id),
+      );
+      const snapshot = await getDocs(logQ);
+      const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      
+      // Sort in frontend since we didn't create a composite index for scheduled_at
+      logs.sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime());
+      setDoses(logs.slice(0, 50)); // Last 50 events
+
+      const total = logs.length;
+      const taken = logs.filter(d => d.status === 'taken').length;
+      const missed = logs.filter(d => d.status === 'missed').length;
+      const skipped = logs.filter(d => d.status === 'skipped').length;
+      
+      setStats({
+        taken,
+        missed,
+        skipped,
+        pending: logs.filter(d => d.status === 'pending').length,
+        adherence: total > 0 ? Math.round((taken / total) * 100) : 0,
+      });
     } catch { /* ignore */ }
   }, [currentPatient]);
 

@@ -8,10 +8,10 @@ No RTC — the ESP32 keeps time via **Wi-Fi + NTP**.
 
 | Component                    | ESP32 pin    |
 |------------------------------|--------------|
-| Servo signal                 | GPIO 13      |
-| LED (alert)                  | GPIO 2       |
-| Push button (acknowledge)    | GPIO 4 (with `INPUT_PULLUP`) |
-| IR sensor (drawer closed)    | GPIO 5       |
+| Servo signal                 | GPIO 18      |
+| IR sensor (drawer closed)    | GPIO 34      |
+| LED (alert)                  | GPIO 25      |
+| Push button (acknowledge)    | GPIO 26 (with `INPUT_PULLUP`) |
 | OLED SDA                     | GPIO 21      |
 | OLED SCL                     | GPIO 22      |
 
@@ -19,10 +19,7 @@ No RTC — the ESP32 keeps time via **Wi-Fi + NTP**.
 
 Read (every ~5 s):
 ```
-devices/dispenser_001/schedule/drawer1
-devices/dispenser_001/schedule/drawer2
-devices/dispenser_001/schedule/drawer3
-devices/dispenser_001/schedule/drawer4
+devices/dispenser_001/drawers/drawer{1..4}
 ```
 
 Write (heartbeat + status):
@@ -83,11 +80,9 @@ void setupTime() {
 }
 
 void pollSchedule() {
-  for (int i = 1; i <= 4; ++i) {
-    String path = String("/devices/") + DEVICE_ID + "/schedule/drawer" + i;
-    if (Firebase.RTDB.getJSON(&fbdo, path)) {
-      // parse enabled / medicine / hour / minute
-    }
+  String path = String("/devices/") + DEVICE_ID + "/drawers.json";
+  if (Firebase.RTDB.getJSON(&fbdo, path)) {
+    // parse the JSON object containing drawer1..4 and their 'times' arrays
   }
 }
 
